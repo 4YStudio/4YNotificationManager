@@ -1,85 +1,88 @@
-# 4Y 通知提示音管理器 (4Y Notification Manager)
+# 4Y 通知提示音管理器
 
-> 4YStudio · 专为 **Debian 13 + KDE 6 + Wayland** 打造的桌面管理系统通知提示音的客户端。
+> **4YStudio** 出品 · 专为 **Debian 13 + KDE 6 + Wayland** 打造
+> 给系统通知加上提示音，并且**按应用区分**：微信一声、QQ 一声、浏览器又是另一声。
 
-基于 **Tauri 2 + Vue 3 (TypeScript)**，后端 Rust，前端 Vite。
+[![Release](https://img.shields.io/github/v/release/4YStudio/4YNotificationManager?color=3daee9)](https://github.com/4YStudio/4YNotificationManager/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Debian%2013%20%7C%20KDE%206%20%7C%20Wayland-3daee9)]()
 
 ---
+
+## 为什么需要它
+
+KDE Plasma 6 的通知气泡**默认不发声**：通知守护进程本身不含音频播放代码，KDE 自家应用靠自己播放，而 Chrome / 微信 / QQ 这类走 D-Bus 的第三方应用弹的通知**天生静音**。
+
+本项目用一个常驻后台服务监听 D-Bus 通知总线，在任意气泡弹出瞬间播放你指定的声音，并支持按「通知来源应用」匹配不同提示音。
 
 ## ✨ 功能
 
-| 功能 | 说明 |
-|---|---|
-| 应用 → 提示音映射 | 为微信 / QQ / 浏览器等不同软件配置不同提示音，可视化增删改 |
-| 兜底音 (default) | 未匹配到的通知统一播放的声音；不设置则未匹配通知静音 |
-| 发现的应用 | 自动从守护日志中解析"曾经发过通知的软件"，一键添加映射 |
-| 声音库 | 浏览系统 Ocean / Freedesktop 音效与个人提示音，支持试听 |
-| 服务控制 | 启动 / 停止 / 重启守护服务，开关开机自启 |
-| KDE 原生集成 | 使用 `kdialog` 做文件选择器，`pw-play` 试听（PipeWire） |
-| 环境自检 | 启动时检测 Debian 13 / KDE 6 / Wayland 是否满足适配条件 |
+- **按应用配置提示音**：`wechat` → 呱.mp3，`qq` → 叮.ogg，其余 → 兜底音
+- **后台服务内置**：守护进程已编译进安装包，**点一下按钮即可启用**，无需手动装脚本
+- **发现的应用**：自动从日志里列出「谁发过通知」，一键添加映射
+- **声音库**：汇总系统 Ocean 音效与个人提示音，可搜索、试听
+- **KDE 原生集成**：`kdialog` 文件选择器、PipeWire `pw-play` 播放、systemd 用户单元
+- **配置即时生效**：改完保存就生效，不需要重启服务
+- **旧版自动迁移**：检测到旧 bash 守护会自动停用，避免双重播放
 
-它管理的是上一个项目里搭好的通知提示音守护脚本：
+## 📦 安装（开箱即用）
 
-- 守护脚本：`~/.local/bin/notification-sound.sh`
-- 配置文件：`~/.config/notification-sound.conf`
-- 系统服务：`notification-sound.service`（systemd 用户服务）
-
----
-
-## 🧱 架构
-
-```
-4YNotificationManager/
-├── src/                         # 前端 (Vue 3 + TS)
-│   ├── App.vue                  # 主界面 / 状态编排 / 导航
-│   ├── api.ts                   # invoke 封装
-│   ├── types.ts                 # 与后端对齐的类型
-│   ├── style.css                # Breeze Dark 风格全局样式
-│   └── components/
-│       ├── MappingsPanel.vue    # 映射管理
-│       ├── DiscoveredPanel.vue  # 发现的应用
-│       ├── SoundLibraryPanel.vue# 声音库
-│       ├── ServicePanel.vue     # 服务 & 环境
-│       └── SoundPicker.vue      # 声音选择弹窗
-└── src-tauri/                   # 后端 (Rust)
-    └── src/lib.rs               # 全部 Tauri 命令 + 单元测试
-```
-
-### 后端命令 (Rust)
-
-`get_config` `save_config` `service_status` `service_action` `play_sound`
-`discovered_apps` `list_sounds` `pick_sound_file` `open_config_dir` `session_info`
-
----
-
-## 🚀 开发 / 构建
+### 方式一：一键脚本
 
 ```bash
-# 开发（热更新）
+curl -fsSL https://raw.githubusercontent.com/4YStudio/4YNotificationManager/main/install.sh | bash
+```
+
+### 方式二：下载 .deb
+
+从 [Releases](https://github.com/4YStudio/4YNotificationManager/releases) 下载后：
+
+```bash
+sudo dpkg -i 4Y.Notification.Manager_*.deb
+```
+
+然后从**应用菜单**打开「4Y 通知提示音」，点击 **⚡ 一键启用后台服务**。
+
+也可以用命令行直接启用（无界面）：
+
+```bash
+fourey-notification-manager --install-service
+```
+
+### 方式三：从源码构建
+
+```bash
+git clone https://github.com/4YStudio/4YNotificationManager.git
+cd 4YNotificationManager
 npm install
-npm run tauri dev
-
-# 打包 .deb
 npm run tauri build -- --bundles deb
-
-# 单元测试（配置往返、日志解析）
-cd src-tauri && cargo test
+sudo dpkg -i "src-tauri/target/release/bundle/deb/"*.deb
 ```
 
-产物：`src-tauri/target/release/bundle/deb/4Y Notification Manager_0.1.0_amd64.deb`
-直接二进制：`src-tauri/target/release/fourey-notification-manager`
+## 🧩 组成
 
-### 安装
+安装包内含**两个二进制**，协同工作：
 
-```bash
-sudo dpkg -i "src-tauri/target/release/bundle/deb/4Y Notification Manager_0.1.0_amd64.deb"
+| 程序 | 作用 |
+|---|---|
+| `fourey-notification-manager` | GUI 管理端（Tauri + Vue3） |
+| `fourey-notify-daemon` | 后台守护进程（Rust，监听 D-Bus 并播放声音） |
+
+以及一个 systemd **用户单元** `4y-notify-daemon.service`（随包安装到 `/usr/lib/systemd/user/`，应用内启用时会写入 `~/.config/systemd/user/` 以便自定义路径生效）。
+
+```
+D-Bus (org.freedesktop.Notifications.Notify)
+        │
+        ▼
+fourey-notify-daemon ──读取──> ~/.config/notification-sound.conf
+        │                          (应用关键词 = 声音路径)
+        ▼
+   pw-play  播放对应提示音
 ```
 
----
+## ⚙️ 配置文件
 
-## 📝 配置文件格式
-
-`~/.config/notification-sound.conf`：
+`~/.config/notification-sound.conf`
 
 ```ini
 # 关键词不区分大小写，子串匹配，自上而下命中第一条
@@ -87,17 +90,60 @@ wechat=/home/you/文档/提示音/呱 一声.mp3
 qq=/home/you/音乐/铃声/简短 提示音.ogg
 firefox=/usr/share/sounds/ocean/stereo/message-attention.oga
 
-# 兜底音（未匹配通知播放它；删除本行则未匹配通知静音）
-default=/home/you/音乐/铃声/简短 提示音.ogg
+# 兜底音（未匹配的通知播放它；删除本行则未匹配通知静音）
+default=/usr/share/sounds/ocean/stereo/message-attention.oga
 ```
 
----
+> 通常不需要手动改：GUI 会帮你写。手工修改后**立即生效**。
 
-## ⚠️ 平台说明
+## 🛠 开发
 
-本项目**只针对 Debian 13 + KDE 6 + Wayland** 适配，依赖：
+```bash
+npm install
+npm run tauri dev                  # 开发热更新
 
-- `pipewire-bin`（`pw-play`）
-- `kdialog`（KDE 文件选择器）
-- `systemctl --user`（管理守护服务）
-- `libwebkit2gtk-4.1` / `libgtk-3`
+cd src-tauri && cargo test         # 后端单元测试
+npm run tauri build -- --bundles deb
+```
+
+### 目录结构
+
+```
+├── src/                       # 前端 Vue3 + TS
+│   ├── App.vue                # 主界面 / 状态编排
+│   ├── api.ts  types.ts
+│   └── components/            # 各功能面板 + 声音选择弹窗
+├── src-tauri/
+│   ├── src/
+│   │   ├── lib.rs             # Tauri 命令 (GUI 后端)
+│   │   ├── config.rs          # 配置读写 / 路径 / 单元模板 (共享)
+│   │   ├── daemon.rs          # 守护进程主循环 (共享)
+│   │   ├── main.rs            # GUI 入口 (+ CLI)
+│   │   └── bin/daemon.rs      # 守护进程入口
+│   └── linux/                 # 随包分发的 systemd 单元 / 示例配置
+├── install.sh                 # 一键安装脚本
+└── .github/workflows/         # 打 tag 自动构建并发布 .deb
+```
+
+## 🔧 常见问题
+
+**Q：通知还是没声音？**
+依次检查：①「服务与环境」页服务是否 `运行中`；② 是否配置了兜底音；③ 终端执行
+`cat ~/.local/state/4y-notify-daemon/daemon.log` 看是否捕获到通知。
+
+**Q：某个软件不响？**
+让 TA 弹一条通知，然后到「发现的应用」页刷新，把显示的真实应用名加入映射。
+
+**Q：旧版 bash 版怎么办？**
+应用会自动停用它并提示。旧的脚本 `~/.local/bin/notification-sound.sh` 可自行删除。
+
+**Q：卸载**
+
+```bash
+fourey-notification-manager --uninstall-service   # 或 GUI 里点「卸载服务」
+sudo apt remove 4y-notification-manager
+```
+
+## 📄 许可
+
+[MIT](LICENSE) © 2026 4YStudio

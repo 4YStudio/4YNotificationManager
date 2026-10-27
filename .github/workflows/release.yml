@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl wget file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Run backend tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build & upload .deb
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "4Y Notification Manager ${{ github.ref_name }}"
+          releaseBody: |
+            4Y 通知提示音管理器 —— 专为 Debian 13 + KDE 6 + Wayland 打造。
+
+            **安装：**
+            ```bash
+            sudo dpkg -i 4Y.Notification.Manager_*.deb
+            ```
+            然后从应用菜单打开「4Y 通知提示音」，点击「一键启用后台服务」即可。
+          releaseDraft: true
+          prerelease: false
+          args: --bundles deb

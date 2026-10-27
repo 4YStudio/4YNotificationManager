@@ -1,44 +1,30 @@
-// 4Y 通知提示音管理器 — Rust 后端
-// 仅适配 Debian 13 + KDE 6 + Wayland 环境
+// 4Y 通知提示音管理器 — Rust 后端 (GUI)
+// 仅适配 Debian 13 + KDE 6 + Wayland
 //
-// 职责:
-//   - 读写 ~/.config/notification-sound.conf (守护脚本的配置)
-//   - 探测/控制系统服务 notification-sound.service
-//   - 试听声音 (pw-play)
-//   - 解析守护日志里"出现过的应用"
-//   - 用 KDE 原生 kdialog 选择声音文件
-//   - 收集运行环境信息 (Debian / KDE / Wayland)
+// 守护进程本身已内置于本工程 (bin/daemon.rs -> fourey-notify-daemon),
+// GUI 负责: 安装/启用 systemd 用户单元、读写配置、试听、日志分析。
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-const SERVICE: &str = "notification-sound.service";
-const LOG_FILE: &str = "/tmp/notification-sound.log";
-const AUDIO_EXT: [&str; 6] = ["ogg", "oga", "mp3", "wav", "flac", "m4a"];
+pub mod config;
+pub mod daemon;
+
+use config::AppConfig;
 
 // ---------- 数据结构 ----------
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Mapping {
-    pub keyword: String,
-    pub sound: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct AppConfig {
-    pub mappings: Vec<Mapping>,
-    pub default_sound: Option<String>,
-    /// 原文件里的注释行(保留用户手写的说明)
-    pub comments: Vec<String>,
-}
 
 #[derive(Serialize, Clone, Debug)]
 pub struct ServiceStatus {
     pub active: bool,
     pub enabled: bool,
+    /// systemd 用户单元是否已安装
+    pub installed: bool,
     pub state: String,
+    pub unit_path: String,
+    pub exec_path: String,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -46,7 +32,6 @@ pub struct DiscoveredApp {
     pub name: String,
     pub count: u32,
     pub last_seen: String,
-    /// 是否已经在映射里配置过
     pub configured: bool,
 }
 
@@ -63,119 +48,12 @@ pub struct SessionInfo {
     pub desktop: String,
     pub session_type: String,
     pub kde_version: String,
-    /// 是否满足 Debian13+KDE6+Wayland
     pub supported: bool,
+    /// 守护进程可执行文件路径
+    pub daemon_path: String,
 }
 
-// ---------- 工具函数 ----------
-
-fn home_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
-}
-
-fn config_path() -> PathBuf {
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| home_dir().join(".config"));
-    base.join("notification-sound.conf")
-}
-
-fn default_header() -> Vec<String> {
-    vec![
-        "# ===== 通知提示音 按应用配置 =====".into(),
-        "# 由 4Y 通知提示音管理器 生成 / 修改".into(),
-        "# 语法: 应用关键词=声音文件绝对路径  (关键词不区分大小写, 子串匹配)".into(),
-        "# default= 为兜底音, 未匹配的通知播放它".into(),
-    ]
-}
-
-fn is_audio(p: &PathBuf) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| AUDIO_EXT.contains(&e.to_lowercase().as_str()))
-        .unwrap_or(false)
-}
-
-// ---------- 配置读 / 写 ----------
-
-#[tauri::command]
-fn get_config() -> AppConfig {
-    let path = config_path();
-    let mut mappings = Vec::new();
-    let mut default_sound = None;
-    let mut comments: Vec<String> = Vec::new();
-
-    if let Ok(content) = fs::read_to_string(&path) {
-        for line in content.lines() {
-            let t = line.trim();
-            if t.is_empty() {
-                continue;
-            }
-            if t.starts_with('#') {
-                comments.push(line.to_string());
-                continue;
-            }
-            if let Some((k, v)) = t.split_once('=') {
-                let (k, v) = (k.trim(), v.trim());
-                if k.eq_ignore_ascii_case("default") {
-                    if !v.is_empty() {
-                        default_sound = Some(v.to_string());
-                    }
-                } else if !k.is_empty() && !v.is_empty() {
-                    mappings.push(Mapping {
-                        keyword: k.to_string(),
-                        sound: v.to_string(),
-                    });
-                }
-            }
-        }
-    }
-
-    if comments.is_empty() {
-        comments = default_header();
-    }
-
-    AppConfig {
-        mappings,
-        default_sound,
-        comments,
-    }
-}
-
-#[tauri::command]
-fn save_config(config: AppConfig) -> Result<String, String> {
-    let path = config_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-
-    let mut out = String::new();
-    for c in &config.comments {
-        out.push_str(c.trim_end());
-        out.push('\n');
-    }
-    out.push('\n');
-
-    for m in &config.mappings {
-        let kw = m.keyword.trim();
-        let sf = m.sound.trim();
-        if kw.is_empty() || sf.is_empty() {
-            continue;
-        }
-        out.push_str(&format!("{}={}\n", kw, sf));
-    }
-
-    if let Some(d) = &config.default_sound {
-        if !d.trim().is_empty() {
-            out.push_str(&format!("\ndefault={}\n", d.trim()));
-        }
-    }
-
-    fs::write(&path, out).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
-}
-
-// ---------- 服务控制 ----------
+// ---------- 工具 ----------
 
 fn run_systemctl(args: &[&str]) -> String {
     Command::new("systemctl")
@@ -186,15 +64,43 @@ fn run_systemctl(args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
+fn is_audio(p: &PathBuf) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| config::AUDIO_EXT.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+// ---------- 配置读 / 写 ----------
+
+#[tauri::command]
+fn get_config() -> AppConfig {
+    config::read_config()
+}
+
+#[tauri::command]
+fn save_config(config: AppConfig) -> Result<String, String> {
+    config::write_config(&config).map_err(|e| e.to_string())
+}
+
+// ---------- 服务状态 / 控制 ----------
+
+fn build_status() -> ServiceStatus {
+    let active = run_systemctl(&["is-active", config::SERVICE]);
+    let enabled = run_systemctl(&["is-enabled", config::SERVICE]);
+    ServiceStatus {
+        active: active == "active",
+        enabled: matches!(enabled.as_str(), "enabled" | "static" | "alias"),
+        installed: config::unit_path().exists(),
+        state: active,
+        unit_path: config::unit_path().to_string_lossy().to_string(),
+        exec_path: config::daemon_bin_path().to_string_lossy().to_string(),
+    }
+}
+
 #[tauri::command]
 fn service_status() -> ServiceStatus {
-    let active_s = run_systemctl(&["is-active", SERVICE]);
-    let enabled_s = run_systemctl(&["is-enabled", SERVICE]);
-    ServiceStatus {
-        active: active_s == "active",
-        enabled: matches!(enabled_s.as_str(), "enabled" | "static" | "alias"),
-        state: active_s,
-    }
+    build_status()
 }
 
 #[tauri::command]
@@ -206,26 +112,109 @@ fn service_action(action: String) -> Result<ServiceStatus, String> {
     let out = Command::new("systemctl")
         .arg("--user")
         .arg(&action)
-        .arg(SERVICE)
+        .arg(config::SERVICE)
         .output()
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
-    Ok(service_status())
+    Ok(build_status())
+}
+
+/// 一键安装: 写单元文件 -> daemon-reload -> 开机自启 -> 启动
+/// (CLI `--install-service` 与 GUI 按钮共用)
+pub fn do_install_service() -> Result<ServiceStatus, String> {
+    let exec = config::daemon_bin_path();
+    if !exec.exists() {
+        return Err(format!(
+            "找不到守护进程: {}。请安装 .deb 包, 或先执行 npm run tauri build",
+            exec.display()
+        ));
+    }
+
+    // 首次安装时若没有配置, 生成一份带默认兜底音的配置
+    if !config::config_path().exists() {
+        let cfg = AppConfig {
+            mappings: Vec::new(),
+            default_sound: pick_default_sound(),
+            comments: config::default_header(),
+        };
+        let _ = config::write_config(&cfg);
+    }
+
+    fs::create_dir_all(config::unit_dir()).map_err(|e| e.to_string())?;
+    fs::write(config::unit_path(), config::unit_content(&exec)).map_err(|e| e.to_string())?;
+
+    // 迁移: 旧版 bash 服务若在自启, 先停用, 避免双重播放
+    if matches!(
+        run_systemctl(&["is-enabled", config::LEGACY_SERVICE]).as_str(),
+        "enabled" | "static" | "alias"
+    ) {
+        run_systemctl(&["disable", "--now", config::LEGACY_SERVICE]);
+    }
+
+    run_systemctl(&["daemon-reload"]);
+    let en = Command::new("systemctl")
+        .args(["--user", "enable", "--now", config::SERVICE])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !en.status.success() {
+        return Err(String::from_utf8_lossy(&en.stderr).trim().to_string());
+    }
+    Ok(build_status())
+}
+
+#[tauri::command]
+fn install_service() -> Result<ServiceStatus, String> {
+    do_install_service()
+}
+
+/// 卸载服务 (停止 + 取消自启 + 删除用户单元)
+pub fn do_uninstall_service() -> Result<ServiceStatus, String> {
+    run_systemctl(&["disable", "--now", config::SERVICE]);
+    if config::unit_path().exists() {
+        let _ = fs::remove_file(config::unit_path());
+    }
+    run_systemctl(&["daemon-reload"]);
+    Ok(build_status())
+}
+
+#[tauri::command]
+fn uninstall_service() -> Result<ServiceStatus, String> {
+    do_uninstall_service()
+}
+
+// ---------- 旧版服务迁移 ----------
+
+#[tauri::command]
+fn legacy_service_info() -> config::LegacyInfo {
+    let script = config::legacy_script_path();
+    config::LegacyInfo {
+        active: run_systemctl(&["is-active", config::LEGACY_SERVICE]) == "active",
+        enabled: matches!(
+            run_systemctl(&["is-enabled", config::LEGACY_SERVICE]).as_str(),
+            "enabled" | "static" | "alias"
+        ),
+        script_exists: script.exists(),
+        script_path: script.to_string_lossy().to_string(),
+    }
+}
+
+/// 停用旧版 bash 守护 (停止 + 取消自启), 不删除文件
+#[tauri::command]
+fn disable_legacy_service() -> Result<(), String> {
+    run_systemctl(&["disable", "--now", config::LEGACY_SERVICE]);
+    Ok(())
 }
 
 // ---------- 试听 ----------
 
 #[tauri::command]
 fn play_sound(path: String) -> Result<(), String> {
-    let p = PathBuf::from(&path);
-    if !p.exists() {
+    if !PathBuf::from(&path).exists() {
         return Err(format!("文件不存在: {}", path));
     }
-    // 优先 pw-play (PipeWire, Wayland 下 KDE6 默认), 回退 paplay
-    let played = Command::new("pw-play").arg(&path).spawn();
-    if played.is_err() {
+    if Command::new("pw-play").arg(&path).spawn().is_err() {
         Command::new("paplay")
             .arg(&path)
             .spawn()
@@ -234,15 +223,23 @@ fn play_sound(path: String) -> Result<(), String> {
     Ok(())
 }
 
-// ---------- 发现的应用(解析守护日志) ----------
+// ---------- 日志 / 发现的应用 ----------
 
-/// 纯函数: 从日志内容解析出通知来源统计(便于单元测试)
+fn read_log() -> String {
+    let p = config::log_path();
+    if let Ok(c) = fs::read_to_string(&p) {
+        return c;
+    }
+    // 兼容旧版日志
+    fs::read_to_string(config::legacy_log_path()).unwrap_or_default()
+}
+
+/// 纯函数: 从日志内容解析通知来源统计
 fn parse_log_apps(content: &str, configured: &[String]) -> Vec<DiscoveredApp> {
     let mut map: std::collections::HashMap<String, (u32, String)> =
         std::collections::HashMap::new();
 
     for line in content.lines() {
-        // 形如: [2026-10-27 08:35:16] 应用[wechat] -> ...
         let Some(pos) = line.find("应用[") else { continue };
         let rest = &line[pos + "应用[".len()..];
         let Some(end) = rest.find(']') else { continue };
@@ -251,7 +248,10 @@ fn parse_log_apps(content: &str, configured: &[String]) -> Vec<DiscoveredApp> {
             continue;
         }
         let ts = if line.starts_with('[') {
-            line[1..].find(']').map(|e| line[1..1 + e].to_string()).unwrap_or_default()
+            line[1..]
+                .find(']')
+                .map(|e| line[1..1 + e].to_string())
+                .unwrap_or_default()
         } else {
             String::new()
         };
@@ -283,25 +283,44 @@ fn parse_log_apps(content: &str, configured: &[String]) -> Vec<DiscoveredApp> {
 
 #[tauri::command]
 fn discovered_apps() -> Vec<DiscoveredApp> {
-    let content = fs::read_to_string(LOG_FILE).unwrap_or_default();
-    let configured: Vec<String> = get_config()
+    let configured: Vec<String> = config::read_config()
         .mappings
         .iter()
         .map(|m| m.keyword.to_lowercase())
         .collect();
-    parse_log_apps(&content, &configured)
+    parse_log_apps(&read_log(), &configured)
+}
+
+#[tauri::command]
+fn log_tail(lines: usize) -> String {
+    let content = read_log();
+    let all: Vec<&str> = content.lines().collect();
+    let n = all.len().saturating_sub(lines.max(1));
+    all[n..].join("\n")
+}
+
+#[tauri::command]
+fn open_log_dir() -> Result<(), String> {
+    let p = config::log_path();
+    let dir = p.parent().map(|d| d.to_path_buf()).unwrap_or_else(config::home_dir);
+    let _ = fs::create_dir_all(&dir);
+    Command::new("xdg-open").arg(dir).spawn().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ---------- 声音文件库 ----------
 
 #[tauri::command]
 fn list_sounds() -> Vec<SoundFile> {
-    let home = home_dir();
+    let home = config::home_dir();
     let mut dirs: Vec<(PathBuf, String)> = vec![
         (home.join("文档/提示音"), "我的提示音".into()),
         (home.join("音乐/铃声"), "我的铃声".into()),
         (home.join("音乐"), "音乐".into()),
-        (PathBuf::from("/usr/share/sounds/ocean/stereo"), "系统 Ocean".into()),
+        (
+            PathBuf::from("/usr/share/sounds/ocean/stereo"),
+            "系统 Ocean".into(),
+        ),
         (
             PathBuf::from("/usr/share/sounds/freedesktop/stereo"),
             "系统 Freedesktop".into(),
@@ -315,13 +334,12 @@ fn list_sounds() -> Vec<SoundFile> {
         for entry in rd.flatten() {
             let p = entry.path();
             if p.is_file() && is_audio(&p) {
-                let name = p
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
                 out.push(SoundFile {
+                    name: p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default(),
                     path: p.to_string_lossy().to_string(),
-                    name,
                     group: group.clone(),
                 });
             }
@@ -334,12 +352,10 @@ fn list_sounds() -> Vec<SoundFile> {
 
 #[tauri::command]
 fn pick_sound_file() -> Option<String> {
-    let home = home_dir();
-    let filter = "*.ogg *.oga *.mp3 *.wav *.flac *.m4a|音频文件";
     let out = Command::new("kdialog")
         .arg("--getopenfilename")
-        .arg(&home)
-        .arg(filter)
+        .arg(config::home_dir())
+        .arg("*.ogg *.oga *.mp3 *.wav *.flac *.m4a|音频文件")
         .arg("--title")
         .arg("选择提示音文件")
         .output()
@@ -357,11 +373,11 @@ fn pick_sound_file() -> Option<String> {
 
 #[tauri::command]
 fn open_config_dir() -> Result<(), String> {
-    let dir = config_path().parent().map(|p| p.to_path_buf()).unwrap_or_else(home_dir);
-    Command::new("xdg-open")
-        .arg(dir)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let dir = config::config_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(config::home_dir);
+    Command::new("xdg-open").arg(dir).spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -374,7 +390,11 @@ fn session_info() -> SessionInfo {
         .and_then(|c| {
             c.lines()
                 .find(|l| l.starts_with("PRETTY_NAME="))
-                .map(|l| l.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string())
+                .map(|l| {
+                    l.trim_start_matches("PRETTY_NAME=")
+                        .trim_matches('"')
+                        .to_string()
+                })
         })
         .unwrap_or_else(|| "未知".into());
 
@@ -398,12 +418,37 @@ fn session_info() -> SessionInfo {
         session_type,
         kde_version,
         supported,
+        daemon_path: config::daemon_bin_path().to_string_lossy().to_string(),
     }
+}
+
+/// 首次安装时挑选一个合理的默认兜底音
+fn pick_default_sound() -> Option<String> {
+    let home = config::home_dir();
+    for dir in [home.join("文档/提示音"), home.join("音乐/铃声")] {
+        if let Ok(rd) = fs::read_dir(&dir) {
+            let mut files: Vec<PathBuf> = rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && is_audio(p))
+                .collect();
+            files.sort();
+            if let Some(f) = files.first() {
+                return Some(f.to_string_lossy().to_string());
+            }
+        }
+    }
+    let sys = PathBuf::from("/usr/share/sounds/ocean/stereo/message-attention.oga");
+    if sys.exists() {
+        return Some(sys.to_string_lossy().to_string());
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Mapping;
 
     #[test]
     fn config_roundtrip() {
@@ -423,20 +468,39 @@ mod tests {
                 },
             ],
             default_sound: Some("/c/def.ogg".into()),
-            comments: default_header(),
+            comments: config::default_header(),
         };
 
-        let written = save_config(cfg).unwrap();
-        assert!(written.ends_with("notification-sound.conf"));
-
-        let back = get_config();
-        assert_eq!(back.mappings.len(), 2);
-        assert_eq!(back.mappings[0].keyword, "wechat");
-        assert_eq!(back.mappings[0].sound, "/a/呱 一声.mp3"); // 含空格/中文的路径
-        assert_eq!(back.default_sound.as_deref(), Some("/c/def.ogg"));
+        config::write_config(&cfg).unwrap();
+        let back = config::read_config();
+        assert_eq!(back.mappings, cfg.mappings);
+        assert_eq!(back.default_sound, cfg.default_sound);
         assert!(back.comments.iter().any(|c| c.starts_with('#')));
 
         fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_match_sound() {
+        let cfg = AppConfig {
+            mappings: vec![Mapping {
+                keyword: "wechat".into(),
+                sound: "/w.ogg".into(),
+            }],
+            default_sound: Some("/d.ogg".into()),
+            comments: vec![],
+        };
+        // 大小写不敏感 + 子串匹配
+        assert_eq!(
+            config::match_sound(&cfg, "WeChat").unwrap().0,
+            "/w.ogg"
+        );
+        assert_eq!(
+            config::match_sound(&cfg, "com.tencent.wechat").unwrap().0,
+            "/w.ogg"
+        );
+        // 未命中走兜底
+        assert_eq!(config::match_sound(&cfg, "firefox").unwrap().0, "/d.ogg");
     }
 
     #[test]
@@ -444,7 +508,7 @@ mod tests {
         let log = "[2026-10-27 08:35:16] 应用[wechat] -> 匹配[wechat] 播放: /x.ogg\n\
 [2026-10-27 08:35:17] 应用[qq] -> 匹配[qq] 播放: /y.ogg\n\
 [2026-10-27 08:35:20] 应用[wechat] -> 默认音: /x.ogg\n\
-[2026-10-27 08:35:21] 应用[unknownapp] 未匹配且无默认音，跳过\n";
+[2026-10-27 08:35:21] 应用[unknownapp] 未匹配且无兜底音，跳过\n";
         let apps = parse_log_apps(log, &["wechat".to_string()]);
 
         let wechat = apps.iter().find(|a| a.name == "wechat").unwrap();
@@ -466,8 +530,14 @@ pub fn run() {
             save_config,
             service_status,
             service_action,
+            install_service,
+            uninstall_service,
+            legacy_service_info,
+            disable_legacy_service,
             play_sound,
             discovered_apps,
+            log_tail,
+            open_log_dir,
             list_sounds,
             pick_sound_file,
             open_config_dir,

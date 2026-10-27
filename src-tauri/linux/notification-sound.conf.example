@@ -1,0 +1,10 @@
+# ===== 通知提示音 按应用配置 =====
+# 由 4Y 通知提示音管理器 生成 / 修改
+# 语法: 应用关键词=声音文件绝对路径  (关键词不区分大小写, 子串匹配)
+# default= 为兜底音, 未匹配的通知播放它
+
+# 示例: 微信播放"呱"一声, QQ 播放简短提示音
+# wechat=/path/to/呱 一声.mp3
+# qq=/path/to/简短 提示音.ogg
+
+# default=/usr/share/sounds/ocean/stereo/message-attention.oga

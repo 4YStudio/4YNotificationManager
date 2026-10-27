@@ -12,7 +12,18 @@ export interface AppConfig {
 export interface ServiceStatus {
   active: boolean;
   enabled: boolean;
+  /** systemd 用户单元是否已安装 */
+  installed: boolean;
   state: string;
+  unit_path: string;
+  exec_path: string;
+}
+
+export interface LegacyInfo {
+  active: boolean;
+  enabled: boolean;
+  script_exists: boolean;
+  script_path: string;
 }
 
 export interface DiscoveredApp {
@@ -34,4 +45,5 @@ export interface SessionInfo {
   session_type: string;
   kde_version: string;
   supported: boolean;
+  daemon_path: string;
 }

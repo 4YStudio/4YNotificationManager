@@ -27,7 +27,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
+    "targets": [
+      "deb",
+      "appimage"
+    ],
     "category": "Utility",
     "shortDescription": "4Y 通知提示音管理器",
     "longDescription": "为 Debian 13 + KDE 6 + Wayland 打造的系统通知提示音管理客户端，可按键应用配置不同的提示音。",
@@ -40,7 +43,18 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "pipewire-bin"]
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "pipewire-bin | pulseaudio-utils",
+          "dbus-user-session | dbus",
+          "kdialog"
+        ],
+        "files": {
+          "/usr/lib/systemd/user/4y-notify-daemon.service": "linux/4y-notify-daemon.service",
+          "/usr/share/4y-notify-daemon/notification-sound.conf.example": "linux/notification-sound.conf.example",
+          "/usr/bin/fourey-notify-daemon": "target/release/fourey-notify-daemon"
+        }
       }
     }
   }

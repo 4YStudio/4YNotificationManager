@@ -4,10 +4,17 @@ version = "0.1.0"
 description = "4Y 通知提示音管理器 — For Debian 13 + KDE 6 + Wayland"
 authors = ["4YStudio"]
 edition = "2021"
+default-run = "fourey-notification-manager"
 
 [lib]
 name = "fourey_notification_manager_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# 主程序: GUI 管理端 (默认 src/main.rs)
+# 守护进程: 通知提示音后台服务
+[[bin]]
+name = "fourey-notify-daemon"
+path = "src/bin/daemon.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -1,0 +1,13 @@
+[Unit]
+Description=4Y 通知提示音守护 (4Y Notification Sound Daemon)
+Documentation=https://github.com/4YStudio/4YNotificationManager
+After=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/fourey-notify-daemon
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

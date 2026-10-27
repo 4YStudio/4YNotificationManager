@@ -4,6 +4,7 @@ import { api } from "./api";
 import type {
   AppConfig,
   DiscoveredApp,
+  LegacyInfo,
   ServiceStatus,
   SessionInfo,
   SoundFile,
@@ -18,30 +19,36 @@ type Tab = "mappings" | "service" | "discovered" | "library";
 
 const tab = ref<Tab>("mappings");
 
-const config = reactive<AppConfig>({
-  mappings: [],
-  default_sound: null,
-  comments: [],
-});
-
+const config = reactive<AppConfig>({ mappings: [], default_sound: null, comments: [] });
 const snapshot = ref("");
 
-const status = reactive<ServiceStatus>({ active: false, enabled: false, state: "" });
+const status = reactive<ServiceStatus>({
+  active: false,
+  enabled: false,
+  installed: false,
+  state: "",
+  unit_path: "",
+  exec_path: "",
+});
 const session = reactive<SessionInfo>({
   os: "",
   desktop: "",
   session_type: "",
   kde_version: "",
   supported: false,
+  daemon_path: "",
 });
+const legacy = ref<LegacyInfo | null>(null);
 const discovered = ref<DiscoveredApp[]>([]);
 const sounds = ref<SoundFile[]>([]);
+const logText = ref("");
 
 const saving = ref(false);
 const busy = ref(false);
 const discLoading = ref(false);
 
 const dirty = computed(() => JSON.stringify(config) !== snapshot.value);
+const legacyRunning = computed(() => !!legacy.value && (legacy.value.active || legacy.value.enabled));
 
 // ---------- Toast ----------
 interface Toast {
@@ -71,11 +78,12 @@ async function loadConfig() {
     comments: config.comments,
   });
 }
-
 async function loadStatus() {
   Object.assign(status, await api.serviceStatus());
 }
-
+async function loadLegacy() {
+  legacy.value = await api.legacyServiceInfo().catch(() => null);
+}
 async function loadDiscovered() {
   discLoading.value = true;
   try {
@@ -84,15 +92,17 @@ async function loadDiscovered() {
     discLoading.value = false;
   }
 }
-
 async function loadSounds() {
   sounds.value = await api.listSounds();
+}
+async function loadLog() {
+  logText.value = await api.logTail(200).catch(() => "");
 }
 
 onMounted(async () => {
   try {
     Object.assign(session, await api.sessionInfo());
-    await Promise.all([loadConfig(), loadStatus(), loadSounds()]);
+    await Promise.all([loadConfig(), loadStatus(), loadSounds(), loadLegacy(), loadLog()]);
     await loadDiscovered();
   } catch (e) {
     toast("初始化失败：" + String(e), "err");
@@ -101,7 +111,6 @@ onMounted(async () => {
 
 // ---------- 保存 ----------
 async function save() {
-  // 校验：不允许存在填一半的映射
   const incomplete = config.mappings.findIndex(
     (m) => (m.keyword.trim() && !m.sound.trim()) || (!m.keyword.trim() && m.sound.trim())
   );
@@ -117,18 +126,13 @@ async function save() {
   saving.value = true;
   try {
     const cleaned: AppConfig = {
-      mappings: config.mappings.map((m) => ({
-        keyword: m.keyword.trim(),
-        sound: m.sound.trim(),
-      })),
+      mappings: config.mappings.map((m) => ({ keyword: m.keyword.trim(), sound: m.sound.trim() })),
       default_sound: config.default_sound,
       comments: config.comments,
     };
     await api.saveConfig(cleaned);
     await loadConfig();
-    // 保存后重启守护，让新配置立即生效
-    Object.assign(status, await api.serviceAction("restart"));
-    toast("已保存，守护服务已重启", "ok");
+    toast(status.installed ? "已保存，配置立即生效" : "已保存（启用后台服务后生效）", "ok");
     await loadDiscovered();
   } catch (e) {
     toast("保存失败：" + String(e), "err");
@@ -157,6 +161,44 @@ async function serviceAction(action: string) {
   }
 }
 
+async function installService() {
+  busy.value = true;
+  try {
+    Object.assign(status, await api.installService());
+    await Promise.all([loadConfig(), loadLog()]);
+    toast("后台服务已启用，通知提示音已生效 🎉", "ok");
+  } catch (e) {
+    toast("启用失败：" + String(e), "err");
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function uninstallService() {
+  busy.value = true;
+  try {
+    Object.assign(status, await api.uninstallService());
+    toast("已卸载后台服务", "ok");
+  } catch (e) {
+    toast("卸载失败：" + String(e), "err");
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function disableLegacy() {
+  busy.value = true;
+  try {
+    await api.disableLegacyService();
+    await loadLegacy();
+    toast("旧版守护服务已停用", "ok");
+  } catch (e) {
+    toast("操作失败：" + String(e), "err");
+  } finally {
+    busy.value = false;
+  }
+}
+
 // ---------- 播放 ----------
 async function play(path: string) {
   if (!path) return;
@@ -171,25 +213,21 @@ async function play(path: string) {
 function addMapping() {
   config.mappings.push({ keyword: "", sound: config.default_sound || "" });
 }
-
 function removeMapping(i: number) {
   config.mappings.splice(i, 1);
 }
-
 function addFromDiscovered(name: string) {
-  config.mappings.push({
-    keyword: name,
-    sound: config.default_sound || "",
-  });
+  config.mappings.push({ keyword: name, sound: config.default_sound || "" });
   tab.value = "mappings";
   toast(`已添加「${name}」，请选择提示音`, "ok");
 }
 
 // ---------- 声音选择器 ----------
-const picker = reactive<{ open: boolean; mode: "mapping" | "default"; index: number }>(
-  { open: false, mode: "mapping", index: -1 }
-);
-
+const picker = reactive<{ open: boolean; mode: "mapping" | "default"; index: number }>({
+  open: false,
+  mode: "mapping",
+  index: -1,
+});
 function openPickerForIndex(i: number) {
   picker.mode = "mapping";
   picker.index = i;
@@ -199,7 +237,6 @@ function openPickerForDefault() {
   picker.mode = "default";
   picker.open = true;
 }
-
 function applyPick(path: string) {
   if (picker.mode === "mapping" && picker.index >= 0) {
     config.mappings[picker.index].sound = path;
@@ -208,12 +245,10 @@ function applyPick(path: string) {
   }
   picker.open = false;
 }
-
 async function browse() {
   const p = await api.pickSoundFile().catch(() => null);
   if (p) applyPick(p);
 }
-
 function setDefault(path: string) {
   config.default_sound = path;
   toast("已设为兜底音（记得保存）", "ok");
@@ -247,13 +282,17 @@ const titleMap: Record<Tab, { title: string; sub: string }> = {
   mappings: { title: "映射管理", sub: "为不同应用配置不同的提示音" },
   discovered: { title: "发现的应用", sub: "从通知日志中捕获的通知来源" },
   library: { title: "声音库", sub: "浏览并试听可用的声音文件" },
-  service: { title: "服务与环境", sub: "守护服务控制与运行环境信息" },
+  service: { title: "服务与环境", sub: "后台服务控制与运行环境信息" },
 };
 
 function switchTab(t: Tab) {
   tab.value = t;
   if (t === "discovered") loadDiscovered();
-  if (t === "service") loadStatus();
+  if (t === "service") {
+    loadStatus();
+    loadLog();
+    loadLegacy();
+  }
 }
 </script>
 
@@ -285,15 +324,14 @@ function switchTab(t: Tab) {
           v-html="item.icon"
         />
         {{ item.label }}
-        <span
-          v-if="item.key === 'mappings' && config.mappings.length"
-          class="nav-badge"
-          >{{ config.mappings.length }}</span
-        >
-        <span
-          v-if="item.key === 'discovered' && discovered.length"
-          class="nav-badge"
-          >{{ discovered.length }}</span
+        <span v-if="item.key === 'mappings' && config.mappings.length" class="nav-badge">{{
+          config.mappings.length
+        }}</span>
+        <span v-if="item.key === 'discovered' && discovered.length" class="nav-badge">{{
+          discovered.length
+        }}</span>
+        <span v-if="item.key === 'service' && !status.installed" class="nav-badge" style="color: var(--warn)"
+          >!</span
         >
       </div>
 
@@ -311,14 +349,56 @@ function switchTab(t: Tab) {
           <div class="sub">{{ titleMap[tab].sub }}</div>
         </div>
         <div class="topbar-right">
-          <span class="pill" :class="status.active ? 'on' : 'off'">
+          <span class="pill" :class="status.installed && status.active ? 'on' : 'off'">
             <span class="dot" />
-            守护{{ status.active ? "运行中" : "已停止" }}
+            {{ !status.installed ? "服务未安装" : status.active ? "运行中" : "已停止" }}
           </span>
         </div>
       </header>
 
       <div class="content">
+        <!-- 未安装提示条(仅非服务页) -->
+        <div
+          v-if="!status.installed && tab !== 'service'"
+          class="card"
+          style="
+            border-color: rgba(61, 174, 233, 0.45);
+            background: linear-gradient(90deg, rgba(61, 174, 233, 0.12), transparent);
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 18px;
+          "
+        >
+          <div style="flex: 1; font-size: 13px">
+            <b>后台服务尚未启用</b>
+            <span class="muted"> —— 现在通知不会播放提示音。</span>
+          </div>
+          <button class="btn primary" :disabled="busy" @click="installService">⚡ 一键启用</button>
+        </div>
+
+        <!-- 旧版服务迁移提示 -->
+        <div
+          v-if="legacyRunning"
+          class="card"
+          style="
+            border-color: rgba(246, 116, 0, 0.45);
+            background: linear-gradient(90deg, rgba(246, 116, 0, 0.1), transparent);
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 18px;
+          "
+        >
+          <div style="flex: 1; font-size: 13px">
+            <b style="color: var(--warn)">检测到旧版守护服务仍在运行</b>
+            <div class="muted" style="font-size: 12px; margin-top: 3px">
+              内置服务与旧版 bash 服务同时运行会导致重复播放，建议停用旧版。
+            </div>
+          </div>
+          <button class="btn" :disabled="busy" @click="disableLegacy">停用旧版服务</button>
+        </div>
+
         <MappingsPanel
           v-if="tab === 'mappings'"
           :config="config"
@@ -353,14 +433,18 @@ function switchTab(t: Tab) {
           :status="status"
           :session="session"
           :busy="busy"
+          :log-text="logText"
           @action="serviceAction"
+          @install="installService"
+          @uninstall="uninstallService"
           @openConfig="api.openConfigDir()"
+          @openLog="api.openLogDir()"
           @refresh="loadStatus"
+          @refreshLog="loadLog"
         />
       </div>
     </div>
 
-    <!-- 声音选择器 -->
     <SoundPicker
       :open="picker.open"
       :sounds="sounds"
@@ -371,11 +455,8 @@ function switchTab(t: Tab) {
       @close="picker.open = false"
     />
 
-    <!-- Toast -->
     <div class="toasts">
-      <div v-for="t in toasts" :key="t.id" class="toast" :class="t.kind">
-        {{ t.msg }}
-      </div>
+      <div v-for="t in toasts" :key="t.id" class="toast" :class="t.kind">{{ t.msg }}</div>
     </div>
   </div>
 </template>

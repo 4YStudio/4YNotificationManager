@@ -31,7 +31,7 @@ function base(p: string): string {
       <span class="spacer" />
       <span v-if="dirty" class="tag bad">有未保存的修改</span>
       <button class="btn primary" :disabled="saving || !dirty" @click="emit('save')">
-        {{ saving ? "保存中…" : "保存并重启服务" }}
+        {{ saving ? "保存中…" : "保存配置" }}
       </button>
     </div>
 
