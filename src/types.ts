@@ -44,6 +44,11 @@ export interface SessionInfo {
   desktop: string;
   session_type: string;
   kde_version: string;
+  /** 理论可用(任何带通知接口的 Linux) */
   supported: boolean;
+  /** 是否在作者测试过的环境(Debian13+KDE6+Wayland) */
+  tested: boolean;
+  /** 检测到的可用播放器 */
+  player: string | null;
   daemon_path: string;
 }

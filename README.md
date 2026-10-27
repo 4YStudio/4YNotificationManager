@@ -1,11 +1,13 @@
 # 4Y 通知提示音管理器
 
-> **4YStudio** 出品 · 专为 **Debian 13 + KDE 6 + Wayland** 打造
+> **4YStudio** 出品 · 已针对 **Debian 13 + KDE 6 + Wayland** 测试
+> 原理基于通用 D-Bus 通知接口，**稍作调整即可用于其它 Linux 桌面** → 见 [ADAPTING.md](ADAPTING.md)
 > 给系统通知加上提示音，并且**按应用区分**：微信一声、QQ 一声、浏览器又是另一声。
 
 [![Release](https://img.shields.io/github/v/release/4YStudio/4YNotificationManager?color=3daee9)](https://github.com/4YStudio/4YNotificationManager/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Debian%2013%20%7C%20KDE%206%20%7C%20Wayland-3daee9)]()
+[![Platform](https://img.shields.io/badge/tested-Debian%2013%20%7C%20KDE%206%20%7C%20Wayland-3daee9)]()
+[![Portable](https://img.shields.io/badge/portable-other%20Linux%20desktops-9aa1a8)](ADAPTING.md)
 
 ---
 
@@ -116,6 +118,7 @@ npm run tauri build -- --bundles deb
 ├── src-tauri/
 │   ├── src/
 │   │   ├── lib.rs             # Tauri 命令 (GUI 后端)
+│   │   ├── platform.rs        # ★ 平台适配层 (移植主要改这里)
 │   │   ├── config.rs          # 配置读写 / 路径 / 单元模板 (共享)
 │   │   ├── daemon.rs          # 守护进程主循环 (共享)
 │   │   ├── main.rs            # GUI 入口 (+ CLI)
@@ -124,6 +127,14 @@ npm run tauri build -- --bundles deb
 ├── install.sh                 # 一键安装脚本
 └── .github/workflows/         # 打 tag 自动构建并发布 .deb
 ```
+
+## 🧩 适配到其它发行版 / 桌面
+
+本项目把**所有与平台相关的东西**收敛在 `src-tauri/src/platform.rs` 一个文件里：
+播放器候选、声音目录、文件选择框、服务名。
+
+- 不改代码也行：设置 `FOURY_PLAYER=paplay`、`FOURY_SOUND_DIRS=/path/a:/path/b` 即可。
+- 想深入定制：看 [**ADAPTING.md**](ADAPTING.md)，里面有一分钟清单和发行版差异表。
 
 ## 🔧 常见问题
 

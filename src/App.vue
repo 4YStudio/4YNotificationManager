@@ -36,6 +36,8 @@ const session = reactive<SessionInfo>({
   session_type: "",
   kde_version: "",
   supported: false,
+  tested: false,
+  player: null,
   daemon_path: "",
 });
 const legacy = ref<LegacyInfo | null>(null);

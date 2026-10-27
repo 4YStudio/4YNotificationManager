@@ -11,6 +11,7 @@ use serde::Serialize;
 
 pub mod config;
 pub mod daemon;
+pub mod platform;
 
 use config::AppConfig;
 
@@ -49,6 +50,10 @@ pub struct SessionInfo {
     pub session_type: String,
     pub kde_version: String,
     pub supported: bool,
+    /// 是否在作者测试过的环境
+    pub tested: bool,
+    /// 检测到的可用播放器
+    pub player: Option<String>,
     /// 守护进程可执行文件路径
     pub daemon_path: String,
 }
@@ -214,13 +219,11 @@ fn play_sound(path: String) -> Result<(), String> {
     if !PathBuf::from(&path).exists() {
         return Err(format!("文件不存在: {}", path));
     }
-    if Command::new("pw-play").arg(&path).spawn().is_err() {
-        Command::new("paplay")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("无法播放: {}", e))?;
+    if platform::play_file(&path) {
+        Ok(())
+    } else {
+        Err("未找到可用播放器(pw-play/paplay/mpv/ffplay/aplay)，\n可设置环境变量 FOURY_PLAYER 指定".into())
     }
-    Ok(())
 }
 
 // ---------- 日志 / 发现的应用 ----------
@@ -312,24 +315,8 @@ fn open_log_dir() -> Result<(), String> {
 
 #[tauri::command]
 fn list_sounds() -> Vec<SoundFile> {
-    let home = config::home_dir();
-    let mut dirs: Vec<(PathBuf, String)> = vec![
-        (home.join("文档/提示音"), "我的提示音".into()),
-        (home.join("音乐/铃声"), "我的铃声".into()),
-        (home.join("音乐"), "音乐".into()),
-        (
-            PathBuf::from("/usr/share/sounds/ocean/stereo"),
-            "系统 Ocean".into(),
-        ),
-        (
-            PathBuf::from("/usr/share/sounds/freedesktop/stereo"),
-            "系统 Freedesktop".into(),
-        ),
-    ];
-    dirs.retain(|(d, _)| d.exists());
-
     let mut out: Vec<SoundFile> = Vec::new();
-    for (dir, group) in dirs {
+    for (dir, group) in platform::sound_dirs() {
         let Ok(rd) = fs::read_dir(&dir) else { continue };
         for entry in rd.flatten() {
             let p = entry.path();
@@ -352,23 +339,7 @@ fn list_sounds() -> Vec<SoundFile> {
 
 #[tauri::command]
 fn pick_sound_file() -> Option<String> {
-    let out = Command::new("kdialog")
-        .arg("--getopenfilename")
-        .arg(config::home_dir())
-        .arg("*.ogg *.oga *.mp3 *.wav *.flac *.m4a|音频文件")
-        .arg("--title")
-        .arg("选择提示音文件")
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    platform::pick_file("选择提示音文件")
 }
 
 #[tauri::command]
@@ -385,62 +356,32 @@ fn open_config_dir() -> Result<(), String> {
 
 #[tauri::command]
 fn session_info() -> SessionInfo {
-    let os = fs::read_to_string("/etc/os-release")
-        .ok()
-        .and_then(|c| {
-            c.lines()
-                .find(|l| l.starts_with("PRETTY_NAME="))
-                .map(|l| {
-                    l.trim_start_matches("PRETTY_NAME=")
-                        .trim_matches('"')
-                        .to_string()
-                })
-        })
-        .unwrap_or_else(|| "未知".into());
-
-    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
-    let session_type = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
-
-    let kde_version = Command::new("plasmashell")
-        .arg("--version")
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
-
-    let supported = os.contains("Debian GNU/Linux 13")
-        && desktop.to_uppercase().contains("KDE")
-        && session_type.eq_ignore_ascii_case("wayland");
-
+    let env = platform::detect_env();
     SessionInfo {
-        os,
-        desktop,
-        session_type,
-        kde_version,
-        supported,
+        os: env.os,
+        desktop: env.desktop,
+        session_type: env.session_type,
+        kde_version: env.kde_version,
+        supported: env.supported,
+        tested: env.tested,
+        player: env.player,
         daemon_path: config::daemon_bin_path().to_string_lossy().to_string(),
     }
 }
 
 /// 首次安装时挑选一个合理的默认兜底音
 fn pick_default_sound() -> Option<String> {
-    let home = config::home_dir();
-    for dir in [home.join("文档/提示音"), home.join("音乐/铃声")] {
-        if let Ok(rd) = fs::read_dir(&dir) {
-            let mut files: Vec<PathBuf> = rd
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.is_file() && is_audio(p))
-                .collect();
-            files.sort();
-            if let Some(f) = files.first() {
-                return Some(f.to_string_lossy().to_string());
-            }
+    for (dir, _) in platform::sound_dirs() {
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        let mut files: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && is_audio(p))
+            .collect();
+        files.sort();
+        if let Some(f) = files.first() {
+            return Some(f.to_string_lossy().to_string());
         }
-    }
-    let sys = PathBuf::from("/usr/share/sounds/ocean/stereo/message-attention.oga");
-    if sys.exists() {
-        return Some(sys.to_string_lossy().to_string());
     }
     None
 }

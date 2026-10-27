@@ -7,6 +7,7 @@
 #
 set -euo pipefail
 
+# ↓ fork 后改这一行即可
 REPO="4YStudio/4YNotificationManager"
 API="https://api.github.com/repos/${REPO}/releases/latest"
 

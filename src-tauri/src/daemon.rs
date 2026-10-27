@@ -4,14 +4,14 @@
 //   1. 启动 `dbus-monitor` 监听会话总线上 org.freedesktop.Notifications.Notify 调用
 //   2. 从调用参数中取出第一个 string 参数(即发送通知的应用名)
 //   3. 按 ~/.config/notification-sound.conf 匹配应播放的声音
-//   4. 用 pw-play (PipeWire) 播放, 失败回退 paplay
+//   4. 交给 platform 模块按候选列表播放(pw-play/paplay/mpv/ffplay/aplay)
 //
 // 配置每次通知时重新读取, 因此改完配置立即生效, 无需重启。
 
 use crate::config;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -47,22 +47,13 @@ fn play_file(path: &str) {
     if path.trim().is_empty() {
         return;
     }
-    if !PathBuf::from(path).exists() {
+    if !Path::new(path).exists() {
         log(&format!("声音文件不存在: {}", path));
         return;
     }
-    let ok = Command::new("pw-play")
-        .arg(path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .is_ok();
-    if !ok {
-        let _ = Command::new("paplay")
-            .arg(path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
+    // 播放器候选与回退策略见 platform 模块
+    if !crate::platform::play_file(path) {
+        log(&format!("未找到可用播放器(pw-play/paplay/mpv/ffplay/aplay) 无法播放: {}", path));
     }
 }
 

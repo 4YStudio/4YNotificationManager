@@ -3,6 +3,9 @@ name = "fourey-notification-manager"
 version = "0.1.0"
 description = "4Y 通知提示音管理器 — For Debian 13 + KDE 6 + Wayland"
 authors = ["4YStudio"]
+repository = "https://github.com/4YStudio/4YNotificationManager"
+license = "MIT"
+readme = "../README.md"
 edition = "2021"
 default-run = "fourey-notification-manager"
 

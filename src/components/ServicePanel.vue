@@ -126,10 +126,17 @@ function confirmUninstall() {
         <div style="font-size: 13px">{{ session.kde_version || "未知" }}</div>
       </div>
       <div>
+        <div class="faint" style="font-size: 11px; margin-bottom: 4px">通知播放器</div>
+        <div style="font-size: 13px">
+          <span v-if="session.player" class="mono" style="font-size: 12px">{{ session.player }}</span>
+          <span v-else class="tag bad">未找到播放器</span>
+        </div>
+      </div>
+      <div>
         <div class="faint" style="font-size: 11px; margin-bottom: 4px">适配检查</div>
-        <span class="tag" :class="session.supported ? 'good' : 'bad'">
-          {{ session.supported ? "✓ Debian13 + KDE6 + Wayland" : "当前环境非目标平台" }}
-        </span>
+        <span v-if="session.tested" class="tag good">✓ 已在 Debian13 + KDE6 + Wayland 测试</span>
+        <span v-else-if="session.supported" class="tag">未测试环境，通常可用</span>
+        <span v-else class="tag bad">缺少音频播放器</span>
       </div>
     </div>
   </div>

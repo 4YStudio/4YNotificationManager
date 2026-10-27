@@ -5,14 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// systemd 用户单元名
-pub const SERVICE: &str = "4y-notify-daemon.service";
-/// 旧版(bash 脚本)服务名, 用于迁移提示
-pub const LEGACY_SERVICE: &str = "notification-sound.service";
-/// 守护进程可执行文件名
-pub const DAEMON_BIN: &str = "fourey-notify-daemon";
-/// 可识别为音频的扩展名
-pub const AUDIO_EXT: [&str; 6] = ["ogg", "oga", "mp3", "wav", "flac", "m4a"];
+// 平台相关常量统一在 platform 模块定义, 这里重导出以保持调用点简洁
+pub use crate::platform::{AUDIO_EXT, DAEMON_BIN, LEGACY_SERVICE, SERVICE};
 
 // ---------- 数据结构 ----------
 
@@ -207,7 +201,7 @@ pub fn unit_content(exec: &Path) -> String {
     format!(
         "[Unit]\n\
 Description=4Y 通知提示音守护 (4Y Notification Sound Daemon)\n\
-Documentation=https://github.com/4YStudio/4YNotificationManager\n\
+Documentation={}\n\
 After=pipewire.service\n\
 \n\
 [Service]\n\
@@ -218,6 +212,7 @@ RestartSec=2\n\
 \n\
 [Install]\n\
 WantedBy=default.target\n",
+        crate::platform::REPO,
         exec.display()
     )
 }
