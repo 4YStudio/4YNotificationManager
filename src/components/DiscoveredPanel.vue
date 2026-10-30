@@ -8,6 +8,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: "add", name: string): void;
+  (e: "mute", name: string): void;
   (e: "refresh"): void;
 }>();
 </script>
@@ -17,13 +18,12 @@ const emit = defineEmits<{
     <div class="row" style="margin-bottom: 4px">
       <div class="card-title" style="margin: 0">发现的应用</div>
       <span class="spacer" />
-      <button class="btn ghost sm" :disabled="loading" @click="emit('refresh')">
-        刷新
-      </button>
+      <button class="btn ghost sm" :disabled="loading" @click="emit('refresh')">刷新</button>
     </div>
 
     <div style="font-size: 12px; color: var(--text-faint); margin-bottom: 14px">
-      这些是系统通知日志里出现过的通知来源。点击「添加」即可为它配置专属提示音。
+      这些是通知日志里出现过的通知来源。可为它配置专属提示音；若该软件
+      <strong>自带提示音</strong>，点「静音」跳过系统提示音避免重叠。
     </div>
 
     <div v-if="apps.length === 0" class="empty">
@@ -36,11 +36,7 @@ const emit = defineEmits<{
         v-for="a in apps"
         :key="a.name"
         class="row"
-        style="
-          padding: 10px 12px;
-          border-radius: 8px;
-          border-bottom: 1px solid var(--border-soft);
-        "
+        style="padding: 10px 12px; border-radius: 8px; border-bottom: 1px solid var(--border-soft)"
       >
         <div style="min-width: 0">
           <div style="font-size: 13.5px; font-weight: 550">{{ a.name }}</div>
@@ -51,7 +47,12 @@ const emit = defineEmits<{
         </div>
         <span class="spacer" />
         <span v-if="a.configured" class="tag good">已配置</span>
-        <button v-else class="btn sm" @click="emit('add', a.name)">＋ 添加</button>
+        <template v-else>
+          <button class="btn sm" @click="emit('add', a.name)">＋ 添加</button>
+          <button class="btn sm danger" title="该应用自带提示音，跳过系统提示音" @click="emit('mute', a.name)">
+            🔇 静音
+          </button>
+        </template>
       </div>
     </div>
   </div>

@@ -14,6 +14,7 @@ import ServicePanel from "./components/ServicePanel.vue";
 import DiscoveredPanel from "./components/DiscoveredPanel.vue";
 import SoundLibraryPanel from "./components/SoundLibraryPanel.vue";
 import SoundPicker from "./components/SoundPicker.vue";
+import { isSilent, SILENT_VALUE } from "./silent";
 
 type Tab = "mappings" | "service" | "discovered" | "library";
 
@@ -224,6 +225,26 @@ function addFromDiscovered(name: string) {
   toast(`已添加「${name}」，请选择提示音`, "ok");
 }
 
+/** 把某个发现的应用一键加入"静音"（该应用自带提示音） */
+function muteFromDiscovered(name: string) {
+  config.mappings.push({ keyword: name, sound: SILENT_VALUE });
+  tab.value = "mappings";
+  toast(`已将「${name}」设为静音，保存后生效`, "ok");
+}
+
+/** 切换某条映射的静音状态 */
+function toggleMute(i: number) {
+  const m = config.mappings[i];
+  if (!m) return;
+  if (isSilent(m.sound)) {
+    // 取消静音 -> 打开选择器挑一个声音
+    openPickerForIndex(i);
+  } else {
+    m.sound = SILENT_VALUE;
+    toast("已设为静音（记得保存）", "ok");
+  }
+}
+
 // ---------- 声音选择器 ----------
 const picker = reactive<{ open: boolean; mode: "mapping" | "default"; index: number }>({
   open: false,
@@ -411,6 +432,7 @@ function switchTab(t: Tab) {
           @play="play"
           @save="save"
           @add="addMapping"
+          @toggleMute="toggleMute"
           @remove="removeMapping"
           @clearDefault="config.default_sound = null"
         />
@@ -420,6 +442,7 @@ function switchTab(t: Tab) {
           :apps="discovered"
           :loading="discLoading"
           @add="addFromDiscovered"
+          @mute="muteFromDiscovered"
           @refresh="loadDiscovered"
         />
 

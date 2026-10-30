@@ -433,15 +433,78 @@ mod tests {
         };
         // 大小写不敏感 + 子串匹配
         assert_eq!(
-            config::match_sound(&cfg, "WeChat").unwrap().0,
-            "/w.ogg"
+            config::match_sound(&cfg, "WeChat"),
+            crate::config::SoundMatch::Play {
+                sound: "/w.ogg".into(),
+                keyword: "wechat".into()
+            }
         );
         assert_eq!(
-            config::match_sound(&cfg, "com.tencent.wechat").unwrap().0,
-            "/w.ogg"
+            config::match_sound(&cfg, "com.tencent.wechat"),
+            crate::config::SoundMatch::Play {
+                sound: "/w.ogg".into(),
+                keyword: "wechat".into()
+            }
         );
         // 未命中走兜底
-        assert_eq!(config::match_sound(&cfg, "firefox").unwrap().0, "/d.ogg");
+        assert_eq!(
+            config::match_sound(&cfg, "firefox"),
+            crate::config::SoundMatch::Play {
+                sound: "/d.ogg".into(),
+                keyword: "default".into()
+            }
+        );
+    }
+
+    #[test]
+    fn test_silent_mapping() {
+        let cfg = AppConfig {
+            mappings: vec![
+                Mapping {
+                    keyword: "wechat".into(),
+                    sound: "silent".into(), // 该应用自带提示音 -> 静音
+                },
+                Mapping {
+                    keyword: "qq".into(),
+                    sound: "/q.ogg".into(),
+                },
+            ],
+            default_sound: Some("/d.ogg".into()),
+            comments: vec![],
+        };
+        // 静音命中
+        assert_eq!(
+            config::match_sound(&cfg, "WeChat"),
+            config::SoundMatch::Silent {
+                keyword: "wechat".into()
+            }
+        );
+        // 静音取值容错: mute / off / - 都算静音
+        assert!(config::is_silent("MUTE"));
+        assert!(config::is_silent(" off "));
+        assert!(config::is_silent("-"));
+        assert!(!config::is_silent("/a.ogg"));
+        // 其它应用不受影响
+        assert_eq!(
+            config::match_sound(&cfg, "qq"),
+            config::SoundMatch::Play {
+                sound: "/q.ogg".into(),
+                keyword: "qq".into()
+            }
+        );
+
+        // 兜底音也可设为静音 -> 全部未匹配应用静音
+        let cfg2 = AppConfig {
+            mappings: vec![],
+            default_sound: Some("silent".into()),
+            comments: vec![],
+        };
+        assert_eq!(
+            config::match_sound(&cfg2, "anything"),
+            config::SoundMatch::Silent {
+                keyword: "default".into()
+            }
+        );
     }
 
     #[test]

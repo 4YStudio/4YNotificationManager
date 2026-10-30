@@ -164,7 +164,27 @@ pub fn write_config(cfg: &AppConfig) -> std::io::Result<String> {
 
 /// 根据应用名匹配应播放的声音; 返回 (声音路径, 命中的关键词)
 /// 关键词不区分大小写, 子串匹配; 未命中返回兜底音。
-pub fn match_sound(cfg: &AppConfig, app: &str) -> Option<(String, String)> {
+/// 表示"命中但静音不播放"的特殊取值(写在配置文件里)
+/// 例: wechat=silent  /  qq=mute  /  firefox=off
+pub const SILENT_TOKENS: [&str; 5] = ["silent", "mute", "off", "none", "-"];
+
+/// 判断某个取值是否代表"静音"
+pub fn is_silent(value: &str) -> bool {
+    SILENT_TOKENS.contains(&value.trim().to_lowercase().as_str())
+}
+
+/// 匹配结果
+#[derive(Debug, PartialEq)]
+pub enum SoundMatch {
+    /// 播放指定文件
+    Play { sound: String, keyword: String },
+    /// 命中但静音(该应用自带提示音, 跳过系统提示音)
+    Silent { keyword: String },
+    /// 未命中且无兜底音
+    None,
+}
+
+pub fn match_sound(cfg: &AppConfig, app: &str) -> SoundMatch {
     let app_lc = app.to_lowercase();
     for m in &cfg.mappings {
         let kw = m.keyword.trim().to_lowercase();
@@ -172,13 +192,27 @@ pub fn match_sound(cfg: &AppConfig, app: &str) -> Option<(String, String)> {
             continue;
         }
         if app_lc.contains(&kw) {
-            return Some((m.sound.clone(), m.keyword.clone()));
+            if is_silent(&m.sound) {
+                return SoundMatch::Silent {
+                    keyword: m.keyword.clone(),
+                };
+            }
+            return SoundMatch::Play {
+                sound: m.sound.clone(),
+                keyword: m.keyword.clone(),
+            };
         }
     }
-    cfg.default_sound
-        .as_ref()
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| (s.clone(), "default".to_string()))
+    match cfg.default_sound.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(d) if is_silent(d) => SoundMatch::Silent {
+            keyword: "default".into(),
+        },
+        Some(d) => SoundMatch::Play {
+            sound: d.to_string(),
+            keyword: "default".into(),
+        },
+        None => SoundMatch::None,
+    }
 }
 
 // ---------- 守护进程定位 & 单元内容 ----------

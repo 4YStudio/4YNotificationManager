@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { SoundFile } from "../types";
+import { SILENT_VALUE } from "../silent";
 
 const props = defineProps<{
   open: boolean;
@@ -36,6 +37,16 @@ const groups = computed(() => {
       </div>
 
       <div class="modal-body">
+        <!-- 静音选项 -->
+        <div
+          class="sound-item"
+          style="border-bottom: 1px solid var(--border-soft); margin-bottom: 4px"
+          @click="emit('choose', SILENT_VALUE)"
+        >
+          <span class="grp">特殊</span>
+          <span class="nm" style="color: var(--warn)">🔇 静音（不播放）</span>
+        </div>
+
         <div v-if="sounds.length === 0" class="empty">
           没有找到可用的声音文件<br />
           点击下方「浏览文件…」手动选择

@@ -61,11 +61,17 @@ fn play_file(path: &str) {
 fn handle(app: &str) {
     let cfg = config::read_config();
     match config::match_sound(&cfg, app) {
-        Some((sound, matched)) => {
-            log(&format!("应用[{}] -> 匹配[{}] 播放: {}", app, matched, sound));
+        config::SoundMatch::Play { sound, keyword } => {
+            log(&format!("应用[{}] -> 匹配[{}] 播放: {}", app, keyword, sound));
             play_file(&sound);
         }
-        None => {
+        config::SoundMatch::Silent { keyword } => {
+            log(&format!(
+                "应用[{}] -> 静音[{}]（自带提示音），跳过播放",
+                app, keyword
+            ));
+        }
+        config::SoundMatch::None => {
             log(&format!("应用[{}] 未匹配且无兜底音，跳过", app));
         }
     }
